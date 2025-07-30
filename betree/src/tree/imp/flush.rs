@@ -124,8 +124,10 @@ where
                 continue;
             }
             // 4. Remove messages from the child buffer.
-            let (buffer, size_delta) = child_buffer.take_buffer();
-            child_buffer.add_size(size_delta);
+
+            let mut buffer = self.get_mut_node(child_buffer.buffer_mut())?;
+            let (buffer, size_delta) = buffer.assert_buffer_mut().take();
+            child_buffer.add_size(-(size_delta as isize));
             self.dml.verify_cache();
             // 5. Insert messages from the child buffer into the child.
             let size_delta_child = child.insert_msg_buffer(buffer, self.msg_action());

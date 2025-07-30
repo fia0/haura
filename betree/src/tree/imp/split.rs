@@ -63,6 +63,7 @@ where
             select_right,
         );
         node.add_size(size_delta);
+        let sibling_size = sibling.size();
         let sibling_np = if select_right {
             let (sibling, np) = self.dml.insert_and_get_mut(sibling, self.tree_id(), pk);
             node = sibling;
@@ -71,7 +72,23 @@ where
             self.dml.insert(sibling, self.tree_id(), pk)
         };
 
-        let size_delta = parent.split_child(sibling_np, pivot_key, select_right);
+        let mut buffer_to_child = self
+            .dml
+            .get_mut(&mut parent.buffer_mut().write(), self.tree_id())?;
+
+        let sibling_buffer = buffer_to_child.assert_buffer_mut().split_at(&pivot_key);
+        let sibling_buffer_size = sibling_buffer.size();
+        let (sibling_buffer, sibling_buffer_np) =
+            self.dml.insert_and_get_mut(sibling, self.tree_id(), pk);
+
+        let size_delta = parent.insert_new_buffer_after_split(
+            sibling_buffer_np,
+            sibling_buffer_size,
+            sibling_np,
+            sibling_size,
+            pivot_key,
+            select_right,
+        );
 
         Ok((node, size_delta))
     }

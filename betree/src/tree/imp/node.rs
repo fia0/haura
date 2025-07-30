@@ -20,6 +20,7 @@ use crate::{
     tree::{pivot_key::LocalPivotKey, MessageAction, StorageKind},
     StoragePreference,
 };
+use core::panic;
 use parking_lot::RwLock;
 use std::{
     borrow::Borrow,
@@ -36,6 +37,7 @@ pub struct Node<N: 'static>(Inner<N>);
 pub(super) enum Inner<N: 'static> {
     MemLeaf(PackedChildBuffer),
     CopylessInternal(CopylessInternalNode<N>),
+    Buffer(PackedChildBuffer),
 }
 
 macro_rules! kib {
@@ -131,6 +133,7 @@ pub(super) enum ChildrenObjects<'a, N> {
 enum NodeInnerType {
     CopylessLeaf = 1,
     CopylessInternal,
+    Buffer,
 }
 
 pub(super) const NODE_PREFIX_LEN: usize = std::mem::size_of::<u32>();
@@ -140,6 +143,7 @@ impl<R: HasStoragePreference + StaticSize> HasStoragePreference for Node<R> {
         match self.0 {
             MemLeaf(ref nvmleaf) => nvmleaf.current_preference(),
             CopylessInternal(ref nvminternal) => nvminternal.current_preference(),
+            Buffer(ref b) => b.current_preference(),
         }
     }
 
@@ -147,6 +151,7 @@ impl<R: HasStoragePreference + StaticSize> HasStoragePreference for Node<R> {
         match self.0 {
             MemLeaf(ref nvmleaf) => nvmleaf.recalculate(),
             CopylessInternal(ref nvminternal) => nvminternal.recalculate(),
+            Buffer(ref b) => b.recalculate(),
         }
     }
 
@@ -154,6 +159,7 @@ impl<R: HasStoragePreference + StaticSize> HasStoragePreference for Node<R> {
         match self.0 {
             MemLeaf(ref nvmleaf) => nvmleaf.system_storage_preference(),
             CopylessInternal(ref nvminternal) => nvminternal.system_storage_preference(),
+            Buffer(ref b) => b.system_storage_preference(),
         }
     }
 
@@ -167,6 +173,7 @@ impl<R: HasStoragePreference + StaticSize> HasStoragePreference for Node<R> {
             CopylessInternal(ref mut nvminternal) => {
                 nvminternal.set_system_storage_preference(pref)
             }
+            Buffer(ref mut b) => b.set_system_storage_preference(pref),
         }
     }
 }
@@ -191,6 +198,10 @@ impl<R: ObjectReference + HasStoragePreference + StaticSize> Object<R> for Node<
                 )?;
                 cpl_internal.pack(writer, csum_builder)
             }
+            Buffer(ref buf) => {
+                writer.write_all((NodeInnerType::Buffer as u32).to_be_bytes().as_ref())?;
+                buf.pack(writer, csum_builder)
+            }
         }
     }
 
@@ -204,6 +215,11 @@ impl<R: ObjectReference + HasStoragePreference + StaticSize> Object<R> for Node<
                 CopylessInternalNode::unpack(data, integrity_mode)?.complete_object_refs(d_id),
             )))
         } else if data[0..4] == (NodeInnerType::CopylessLeaf as u32).to_be_bytes() {
+            Ok(Node(MemLeaf(PackedChildBuffer::unpack(
+                data.into_sliced_cow_bytes().slice_from(4),
+                integrity_mode,
+            )?)))
+        } else if data[0..4] == (NodeInnerType::Buffer as u32).to_be_bytes() {
             Ok(Node(MemLeaf(PackedChildBuffer::unpack(
                 data.into_sliced_cow_bytes().slice_from(4),
                 integrity_mode,
@@ -283,6 +299,7 @@ impl<N: StaticSize> Size for Node<N> {
         match self.0 {
             MemLeaf(ref nvmleaf) => 4 + nvmleaf.size(),
             CopylessInternal(ref nvminternal) => 4 + nvminternal.size(),
+            Buffer(ref b) => 4 + b.size(),
         }
     }
 
@@ -290,6 +307,7 @@ impl<N: StaticSize> Size for Node<N> {
         match self.0 {
             MemLeaf(ref nvmleaf) => nvmleaf.actual_size().map(|size| 4 + size),
             CopylessInternal(ref nvminternal) => nvminternal.actual_size().map(|size| 4 + size),
+            Buffer(ref b) => b.actual_size().map(|size| 4 + size),
         }
     }
 
@@ -297,6 +315,7 @@ impl<N: StaticSize> Size for Node<N> {
         match &self.0 {
             MemLeaf(l) => l.cache_size(),
             CopylessInternal(i) => i.cache_size(),
+            Buffer(b) => b.cache_size(),
         }
     }
 }
@@ -307,7 +326,7 @@ impl<N: StaticSize + HasStoragePreference> Node<N> {
         N: ObjectReference,
     {
         match self.0 {
-            MemLeaf(_) => None,
+            MemLeaf(_) | Buffer(_) => None,
             CopylessInternal(ref mut nvminternal) => Some(nvminternal.try_walk(key)),
         }
     }
@@ -321,7 +340,7 @@ impl<N: StaticSize + HasStoragePreference> Node<N> {
     {
         let max_size = storage_map.max_size(&self);
         match self.0 {
-            MemLeaf(_) => None,
+            MemLeaf(_) | Buffer(_) => None,
             CopylessInternal(ref mut nvminternal) => {
                 nvminternal.try_find_flush_candidate(MIN_FLUSH_SIZE, max_size.unwrap(), MIN_FANOUT)
             }
@@ -346,6 +365,7 @@ impl<N: HasStoragePreference + StaticSize> Node<N> {
         match self.0 {
             MemLeaf(_) => "nvmleaf",
             CopylessInternal(_) => "nvminternal",
+            Buffer(_) => "buffer",
         }
     }
     pub(super) fn fanout(&self) -> Option<usize>
@@ -353,7 +373,7 @@ impl<N: HasStoragePreference + StaticSize> Node<N> {
         N: ObjectReference,
     {
         match self.0 {
-            MemLeaf(_) => None,
+            MemLeaf(_) | Buffer(_) => None,
             CopylessInternal(ref nvminternal) => Some(nvminternal.fanout()),
         }
     }
@@ -381,7 +401,7 @@ impl<N: HasStoragePreference + StaticSize> Node<N> {
         N: ObjectReference,
     {
         match self.0 {
-            MemLeaf(_) => false,
+            MemLeaf(_) | Buffer(_) => false,
             CopylessInternal(ref nvminternal) => nvminternal.fanout() < MIN_FANOUT,
         }
     }
@@ -389,13 +409,13 @@ impl<N: HasStoragePreference + StaticSize> Node<N> {
     pub(super) fn is_leaf(&self) -> bool {
         match self.0 {
             MemLeaf(_) => true,
-            CopylessInternal(_) => false,
+            CopylessInternal(_) | Buffer(_) => false,
         }
     }
 
     pub(super) fn is_disjoint(&self) -> bool {
         match self.0 {
-            MemLeaf(_) => false,
+            MemLeaf(_) | Buffer(_) => false,
             CopylessInternal(_) => true,
         }
     }
@@ -408,6 +428,7 @@ impl<N: HasStoragePreference + StaticSize> Node<N> {
         match self.0 {
             MemLeaf(_) => 0,
             CopylessInternal(ref nvminternal) => nvminternal.level(),
+            Buffer(_) => u32::MAX,
         }
     }
 
@@ -416,14 +437,14 @@ impl<N: HasStoragePreference + StaticSize> Node<N> {
         N: ObjectReference,
     {
         match self.0 {
-            MemLeaf(_) => false,
+            MemLeaf(_) | Buffer(_) => false,
             CopylessInternal(ref nvminternal) => nvminternal.fanout() == 1,
         }
     }
 
     fn inner_size(&self) -> usize {
         match &self.0 {
-            MemLeaf(m) => m.size(),
+            MemLeaf(m) | Buffer(m) => m.size(),
             CopylessInternal(d) => d.size(),
         }
     }
@@ -459,6 +480,7 @@ impl<N: ObjectReference + StaticSize + HasStoragePreference> Node<N> {
                     nvminternal.level(),
                 )
             }
+            Buffer(_) => unimplemented!(),
         };
         debug!("Root split pivot key: {:?}", pivot_key);
 
@@ -468,8 +490,14 @@ impl<N: ObjectReference + StaticSize + HasStoragePreference> Node<N> {
         let left_child = allocate_obj(left_sibling, LocalPivotKey::LeftOuter(pivot_key.clone()));
         let right_child = allocate_obj(right_sibling, LocalPivotKey::Right(pivot_key.clone()));
 
-        let left_buffer = PackedChildBuffer::new(false);
-        let right_buffer = PackedChildBuffer::new(false);
+        let left_buffer = allocate_obj(
+            Node(Buffer(PackedChildBuffer::new(false))),
+            LocalPivotKey::LeftOuter(pivot_key.clone()),
+        );
+        let right_buffer = allocate_obj(
+            Node(Buffer(PackedChildBuffer::new(false))),
+            LocalPivotKey::Right(pivot_key.clone()),
+        );
 
         let left_link = InternalNodeLink {
             buffer_size: left_buffer.size(),
@@ -496,7 +524,10 @@ impl<N: ObjectReference + StaticSize + HasStoragePreference> Node<N> {
 
 pub(super) enum GetResult<'a, N: 'a + 'static> {
     Data(Option<(KeyInfo, SlicedCowBytes)>),
-    NextNode(&'a RwLock<N>),
+    NextNode {
+        child: &'a RwLock<N>,
+        buffer: &'a RwLock<N>,
+    },
 }
 
 pub(super) enum ApplyResult<'a, N: 'a + 'static> {
@@ -519,6 +550,7 @@ pub(super) enum GetRangeResult<'a, T, N: 'a + 'static> {
     Data(T),
     NextNode {
         np: &'a RwLock<N>,
+        buffer_np: &'a RwLock<N>,
         prefetch_option_node: Option<&'a RwLock<N>>,
     },
 }
@@ -535,8 +567,26 @@ impl<N: HasStoragePreference> Node<N> {
                 if let Some(msg) = msg {
                     msgs.push(msg);
                 }
-                GetResult::NextNode(child_np)
+                GetResult::NextNode {
+                    child: child_np,
+                    buffer: todo!(),
+                }
             }
+            Buffer(_) => unimplemented!(),
+        }
+    }
+
+    pub(super) fn assert_buffer(&self) -> &PackedChildBuffer {
+        match &self.0 {
+            Buffer(packed_child_buffer) => packed_child_buffer,
+            _ => panic!("cannot assert non-buffer as buffer"),
+        }
+    }
+
+    pub(super) fn assert_buffer_mut(&mut self) -> &mut PackedChildBuffer {
+        match &mut self.0 {
+            Buffer(packed_child_buffer) => packed_child_buffer,
+            _ => panic!("cannot assert non-buffer as buffer"),
         }
     }
 
@@ -561,18 +611,19 @@ impl<N: HasStoragePreference> Node<N> {
 
                 let cl = nvminternal.get_range(key, left_pivot_key, right_pivot_key, all_msgs);
 
-                for (key, msg) in cl.buffer().get_all_messages() {
-                    all_msgs
-                        .entry(CowBytes::from(key))
-                        .or_insert_with(Vec::new)
-                        .push(msg.clone());
-                }
+                // for (key, msg) in cl.buffer().get_all_messages() {
+                //     all_msgs
+                //         .entry(CowBytes::from(key))
+                //         .or_insert_with(Vec::new)
+                //         .push(msg.clone());
+                // }
 
                 GetRangeResult::NextNode {
                     np: cl.ptr(),
                     prefetch_option_node: prefetch_option.map(|l| l.ptr()),
                 }
             }
+            Buffer(_) => unimplemented!(),
         }
     }
 
@@ -586,6 +637,7 @@ impl<N: HasStoragePreference> Node<N> {
         match self.0 {
             MemLeaf(_) => None,
             CopylessInternal(ref nvminternal) => Some(nvminternal.pivot_get(pk)),
+            Buffer(_) => None,
         }
     }
 
@@ -599,6 +651,7 @@ impl<N: HasStoragePreference> Node<N> {
         match self.0 {
             MemLeaf(_) => None,
             CopylessInternal(ref mut nvminternal) => Some(nvminternal.pivot_get_mut(pk)),
+            Buffer(_) => None,
         }
     }
 }
@@ -631,6 +684,7 @@ impl<N: HasStoragePreference + StaticSize> Node<N> {
                     nvminternal.after_insert_size_delta(child_idx, size_delta);
                     size_delta
                 }
+                Buffer(_) => unimplemented!(),
             })
     }
 
@@ -660,6 +714,7 @@ impl<N: HasStoragePreference + StaticSize> Node<N> {
                     }
                     size_delta
                 }
+                Buffer(_) => unimplemented!(),
             })
     }
 
@@ -684,6 +739,7 @@ impl<N: HasStoragePreference + StaticSize> Node<N> {
             CopylessInternal(ref mut nvminternal) => {
                 ApplyResult::NextNode(nvminternal.apply_with_info(key, pref))
             }
+            Buffer(_) => unimplemented!(),
         }
     }
 }
@@ -694,7 +750,7 @@ impl<N: HasStoragePreference> Node<N> {
         N: ObjectReference,
     {
         match self.0 {
-            MemLeaf(_) => None,
+            MemLeaf(_) | Buffer(_) => None,
             CopylessInternal(ref mut nvminternal) => Some(Box::new(
                 nvminternal
                     .iter_mut()
@@ -710,7 +766,7 @@ impl<N: HasStoragePreference> Node<N> {
         N: ObjectReference,
     {
         match self.0 {
-            MemLeaf(_) => None,
+            MemLeaf(_) | Buffer(_) => None,
             CopylessInternal(ref nvminternal) => {
                 Some(Box::new(nvminternal.iter().map(|link| link.ptr())))
             }
@@ -722,7 +778,7 @@ impl<N: HasStoragePreference> Node<N> {
         N: ObjectReference,
     {
         match self.0 {
-            MemLeaf(_) => None,
+            MemLeaf(_) | Buffer(_) => None,
             CopylessInternal(ref mut nvminternal) => Some(ChildrenObjects::NVMChildBuffer(
                 Box::new(nvminternal.drain_children()),
             )),
@@ -756,6 +812,7 @@ impl<N: ObjectReference + StaticSize + HasStoragePreference> Node<N> {
                 let (node, pivot_key, size_delta, pk) = nvminternal.split();
                 (Node(CopylessInternal(node)), pivot_key, size_delta, pk)
             }
+            Buffer(_) => unimplemented!(),
         }
     }
 
@@ -930,6 +987,7 @@ impl<N: HasStoragePreference + ObjectReference> Node<N> {
                     .collect()
                 },
             },
+            _ => unimplemented!(),
         }
     }
 }

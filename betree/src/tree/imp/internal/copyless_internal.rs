@@ -37,8 +37,8 @@ pub(in crate::tree::imp) struct CopylessInternalNode<N> {
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(bound(serialize = "N: Serialize", deserialize = "N: Deserialize<'de>"))]
 pub(in crate::tree::imp) struct ChildLink<N> {
-    #[serde(skip)]
-    buffer: PackedChildBuffer,
+    #[serde(with = "serialize_nodepointer")]
+    buffer: RwLock<N>,
     #[serde(with = "serialize_nodepointer")]
     ptr: RwLock<N>,
 }
@@ -57,18 +57,18 @@ impl From<ChecksumError> for std::io::Error {
 }
 
 impl<N> ChildLink<N> {
-    pub fn new(buffer: PackedChildBuffer, ptr: N) -> Self {
+    pub fn new(buffer: N, ptr: N) -> Self {
         ChildLink {
-            buffer,
+            buffer: RwLock::new(buffer),
             ptr: RwLock::new(ptr),
         }
     }
 
-    pub fn buffer_mut(&mut self) -> &mut PackedChildBuffer {
+    pub fn buffer_mut(&mut self) -> &mut RwLock<N> {
         &mut self.buffer
     }
 
-    pub fn buffer(&self) -> &PackedChildBuffer {
+    pub fn buffer(&self) -> &RwLock<N> {
         &self.buffer
     }
 
@@ -147,12 +147,12 @@ impl<N: StaticSize> Size for CopylessInternalNode<N> {
         std::mem::size_of::<u32>()
             + self.meta_data.size()
             + std::mem::size_of::<u32>()
-            + self.children.len() * N::static_size()
-            + self
-                .children
-                .iter()
-                .map(|c| c.buffer.cache_size())
-                .sum::<usize>()
+            + self.children.len() * N::static_size() * 2
+        // + self
+        //     .children
+        //     .iter()
+        //     .map(|c| c.buffer.cache_size())
+        //     .sum::<usize>()
     }
 }
 
@@ -215,12 +215,12 @@ impl<N: HasStoragePreference> HasStoragePreference for CopylessInternalNode<N> {
 
 pub struct InternalNodeLink<N> {
     pub ptr: N,
-    pub buffer: PackedChildBuffer,
+    pub buffer: N,
     pub buffer_size: usize,
 }
 
 impl<N> InternalNodeLink<N> {
-    pub fn destruct(self) -> (N, PackedChildBuffer) {
+    pub fn destruct(self) -> (N, N) {
         (self.ptr, self.buffer)
     }
 }
@@ -228,7 +228,7 @@ impl<N> InternalNodeLink<N> {
 impl<N> Into<ChildLink<N>> for InternalNodeLink<N> {
     fn into(self) -> ChildLink<N> {
         ChildLink {
-            buffer: self.buffer,
+            buffer: RwLock::new(self.buffer),
             ptr: RwLock::new(self.ptr),
         }
     }
@@ -359,30 +359,30 @@ impl<N> CopylessInternalNode<N> {
         bincode::serialize_into(&mut tmp, &self.children)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
-        let mut tmp_buffers = vec![];
+        // let mut tmp_buffers = vec![];
 
-        for (size, child) in self
-            .meta_data
-            .entries_sizes
-            .iter()
-            .zip(self.children.iter())
-        {
-            assert_eq!(*size, child.buffer.size());
-        }
+        // for (size, child) in self
+        //     .meta_data
+        //     .entries_sizes
+        //     .iter()
+        //     .zip(self.children.iter())
+        // {
+        //     assert_eq!(*size, child.buffer.size());
+        // }
 
-        for child in self.children.iter() {
-            let integrity = child.buffer.pack(&mut tmp_buffers, &csum_builder)?;
-            assert_eq!(
-                bincode::serialized_size(&integrity).unwrap(),
-                INTERNAL_INTEGRITY_CHECKSUM_SIZE as u64
-            );
-            bincode::serialize_into(&mut tmp, &integrity)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        }
+        // for child in self.children.iter() {
+        //     let integrity = child.buffer.pack(&mut tmp_buffers, &csum_builder)?;
+        //     assert_eq!(
+        //         bincode::serialized_size(&integrity).unwrap(),
+        //         INTERNAL_INTEGRITY_CHECKSUM_SIZE as u64
+        //     );
+        //     bincode::serialize_into(&mut tmp, &integrity)
+        //         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        // }
 
         let csum = csum_builder(&tmp);
         w.write_all(&tmp)?;
-        w.write_all(&tmp_buffers)?;
+        // w.write_all(&tmp_buffers)?;
         Ok(IntegrityMode::Internal {
             csum,
             len: tmp.len() as u32,
@@ -414,26 +414,26 @@ impl<N> CopylessInternalNode<N> {
         cursor += 4;
 
         // NOTE: This section scales different from the time than the packed buffers unpack which is weird
-        let mut ptrs: Vec<ChildLink<N>> = bincode::deserialize(&buf[cursor..cursor + ptrs_len])
+        let ptrs: Vec<ChildLink<N>> = bincode::deserialize(&buf[cursor..cursor + ptrs_len])
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         cursor += ptrs_len;
 
-        let mut checksums: Vec<IntegrityMode<C>> = vec![];
-        for _ in ptrs.iter() {
-            checksums.push(
-                bincode::deserialize(&buf[cursor..cursor + INTERNAL_INTEGRITY_CHECKSUM_SIZE])
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?,
-            );
-            cursor += INTERNAL_INTEGRITY_CHECKSUM_SIZE;
-        }
-        for (idx, buffer_csum) in checksums.into_iter().enumerate() {
-            let sub = buf.clone().slice_from(cursor as u32);
-            let b: PackedChildBuffer = PackedChildBuffer::unpack(sub, buffer_csum)?;
-            cursor += b.size();
-            assert_eq!(meta_data.entries_sizes[idx], b.size());
-            let _ = std::mem::replace(&mut ptrs[idx].buffer, b);
-            assert_eq!(meta_data.entries_sizes[idx], ptrs[idx].buffer.size());
-        }
+        // let mut checksums: Vec<IntegrityMode<C>> = vec![];
+        // for _ in ptrs.iter() {
+        //     checksums.push(
+        //         bincode::deserialize(&buf[cursor..cursor + INTERNAL_INTEGRITY_CHECKSUM_SIZE])
+        //             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?,
+        //     );
+        //     cursor += INTERNAL_INTEGRITY_CHECKSUM_SIZE;
+        // }
+        // for (idx, buffer_csum) in checksums.into_iter().enumerate() {
+        //     let sub = buf.clone().slice_from(cursor as u32);
+        //     let b: PackedChildBuffer = PackedChildBuffer::unpack(sub, buffer_csum)?;
+        //     cursor += b.size();
+        //     assert_eq!(meta_data.entries_sizes[idx], b.size());
+        //     let _ = std::mem::replace(&mut ptrs[idx].buffer, b);
+        //     assert_eq!(meta_data.entries_sizes[idx], ptrs[idx].buffer.size());
+        // }
 
         Ok(CopylessInternalNode {
             meta_data,
@@ -442,7 +442,8 @@ impl<N> CopylessInternalNode<N> {
     }
 
     pub fn after_insert_size_delta(&mut self, idx: usize, size_delta: isize) {
-        self.meta_data.entries_sizes[idx] = self.children[idx].buffer.size();
+        self.meta_data.entries_sizes[idx] =
+            (self.meta_data.entries_sizes[idx] as isize + size_delta) as usize;
 
         // assert!(
         //     self.meta_data.entries_sizes[idx] < 8 * 1024 * 1024,
@@ -709,7 +710,7 @@ where
                 .enumerate()
                 .max_by_key(|(_, v)| *v)
                 .unwrap();
-            assert_eq!(self.children[child_idx].buffer.size(), *child);
+            // assert_eq!(self.children[child_idx].buffer.size(), *child);
 
             if *child >= min_flush_size
                 && ((self.size() - *child) <= max_node_size || self.fanout() < 2 * min_fanout)
@@ -749,7 +750,10 @@ impl<'a, N: StaticSize> Size for TakeChildBuffer<'a, N> {
 impl<'a, N: StaticSize + HasStoragePreference> TakeChildBuffer<'a, N> {
     pub(in crate::tree::imp) fn split_child(
         &mut self,
+        sibling_size: usize,
         sibling_np: N,
+        buffer_np: N,
+        child_size: usize,
         pivot_key: CowBytes,
         select_right: bool,
     ) -> isize
@@ -761,21 +765,16 @@ impl<'a, N: StaticSize + HasStoragePreference> TakeChildBuffer<'a, N> {
         // invalidated
 
         let before = self.cache_size();
-        let sibling = self.node.children[self.child_idx]
-            .buffer
-            .split_at(&pivot_key);
-        let sibling_size = sibling.size();
         // let size_delta = sibling_size + pivot_key.size();
         self.node.children.insert(
             self.child_idx + 1,
             ChildLink {
-                buffer: sibling,
+                buffer: RwLock::new(buffer_np),
                 ptr: RwLock::new(sibling_np),
             },
         );
         self.node.meta_data.pivot.insert(self.child_idx, pivot_key);
-        self.node.meta_data.entries_sizes[self.child_idx] =
-            self.node.children[self.child_idx].buffer.size();
+        self.node.meta_data.entries_sizes[self.child_idx] = child_size;
         self.node
             .meta_data
             .entries_sizes
@@ -794,12 +793,45 @@ impl<'a, N: StaticSize + HasStoragePreference> TakeChildBuffer<'a, N> {
         // size_delta as isize
     }
 
-    pub fn take_buffer(&mut self) -> (BTreeMap<CowBytes, (KeyInfo, SlicedCowBytes)>, isize) {
-        let (map, size_delta) = self.node.children[self.child_idx].buffer.take();
+    pub(in crate::tree::imp) fn insert_new_buffer_after_split(
+        &mut self,
+        sibling_buffer_np: N,
+        sibling_buffer_size: usize,
+        sibling_np: N,
+        sibling_size: usize,
+        pivot_key: CowBytes,
+        select_right: bool,
+    ) -> isize {
+        let before = self.cache_size();
+        self.node.children.insert(
+            self.child_idx + 1,
+            ChildLink {
+                buffer: RwLock::new(sibling_buffer_np),
+                ptr: RwLock::new(sibling_np),
+            },
+        );
+        self.node.meta_data.pivot.insert(self.child_idx, pivot_key);
+        self.node.meta_data.entries_sizes[self.child_idx] = sibling_buffer_size;
         self.node
-            .after_insert_size_delta(self.child_idx, -(size_delta as isize));
-        (map, -(size_delta as isize))
+            .meta_data
+            .entries_sizes
+            .insert(self.child_idx + 1, sibling_size);
+        self.node.meta_data.entries_prefs.insert(
+            self.child_idx + 1,
+            self.node.meta_data.entries_prefs[self.child_idx],
+        );
+        if select_right {
+            self.child_idx += 1;
+        }
+        self.cache_size() as isize - (before as isize)
     }
+
+    // pub fn take_buffer(&mut self) -> (BTreeMap<CowBytes, (KeyInfo, SlicedCowBytes)>, isize) {
+    //     let (map, size_delta) = self.node.children[self.child_idx].buffer.take();
+    //     self.node
+    //         .after_insert_size_delta(self.child_idx, -(size_delta as isize));
+    //     (map, -(size_delta as isize))
+    // }
 }
 
 impl<'a, N> TakeChildBuffer<'a, N>
@@ -875,7 +907,7 @@ where
             + std::mem::size_of::<u8>()
             + std::mem::size_of::<usize>();
         left_buffer.append(&mut right_buffer);
-        self.node.meta_data.entries_sizes[self.pivot_key_idx] = left_buffer.size();
+        self.node.meta_data.entries_sizes[self.pivot_key_idx] = unimplemented!();
         self.node.meta_data.invalidate();
 
         MergeChildResult {
@@ -895,9 +927,10 @@ where
             let (left, right) = self.node.children[self.pivot_key_idx..].split_at_mut(1);
             // Move messages around
             let (left_child, right_child) = (&mut left[0].buffer, &mut right[0].buffer);
-            left_child.rebalance(right_child, &new_pivot_key);
-            self.node.meta_data.entries_sizes[self.pivot_key_idx] = left_child.size();
-            self.node.meta_data.entries_sizes[self.pivot_key_idx + 1] = left_child.size();
+            unimplemented!()
+            // left_child.rebalance(right_child, &new_pivot_key);
+            // self.node.meta_data.entries_sizes[self.pivot_key_idx] = left_child.size();
+            // self.node.meta_data.entries_sizes[self.pivot_key_idx + 1] = left_child.size();
         }
 
         let mut size_delta = new_pivot_key.size() as isize;
@@ -919,14 +952,14 @@ impl<'a, N: Size + HasStoragePreference> TakeChildBuffer<'a, N> {
         &mut self.node.children[self.child_idx].ptr
     }
 
-    pub fn buffer_mut(&mut self) -> &mut PackedChildBuffer
+    pub fn buffer_mut(&mut self) -> &mut RwLock<N>
     where
         N: ObjectReference,
     {
         &mut self.node.children[self.child_idx].buffer
     }
 
-    pub fn buffer(&self) -> &PackedChildBuffer
+    pub fn buffer(&self) -> &RwLock<N>
     where
         N: ObjectReference,
     {

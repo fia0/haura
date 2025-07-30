@@ -427,6 +427,9 @@ where
             };
             node = next_node;
         };
+
+        todo!("fetch messages from child buffers");
+
         match data {
             None => {
                 let mut tmp = None;
