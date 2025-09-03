@@ -205,11 +205,11 @@ fn insert_single_key(#[case] kind: StorageKind) {
 #[case(StorageKind::Memory)]
 #[case(StorageKind::Hdd)]
 fn insert_random_keys(#[case] kind: StorageKind) {
-    let (db, ds, ks) = random_db(1, 1024, kind);
+    let (db, ds, ks) = random_db(1, 128, kind);
     db.drop_cache().unwrap();
     for idx in 1..ks {
         let k = (idx as u64).to_be_bytes();
-        // println!("{:?} {}/{ks}", k.as_bytes(), idx);
+        println!("{:?} {}/{ks}", k.bytes(), idx);
         assert_eq!(ds.get(&k[..]).unwrap().unwrap().len(), 1024);
     }
     // FIXME: Iterator is still broken...

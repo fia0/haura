@@ -420,15 +420,45 @@ where
         let key = key.borrow();
         let mut msgs = Vec::new();
         let mut node = self.get_root_node()?;
+
+        enum BufferPlaceholder<A, B> {
+            Prefetch(A),
+            InCache(B),
+        }
+
+        let mut buffers = vec![];
         let data = loop {
-            let next_node = match node.get(key, &mut msgs) {
-                GetResult::NextNode(np) => self.get_node(np)?,
+            let next_node = match node.get(key) {
+                GetResult::NextNode { child, buffer } => {
+                    if let Some(buffer) = self.dmu().try_get(&buffer.read()) {
+                        buffers.push(BufferPlaceholder::InCache(buffer))
+                    } else {
+                        buffers.push(BufferPlaceholder::Prefetch(
+                            self.dmu().prefetch(&buffer.read())?,
+                        ));
+                    }
+                    self.get_node(child)?
+                }
                 GetResult::Data(data) => break data,
             };
             node = next_node;
         };
 
-        todo!("fetch messages from child buffers");
+        for buffer_opt in buffers.into_iter() {
+            let buf = match buffer_opt {
+                BufferPlaceholder::InCache(buf) => buf,
+                BufferPlaceholder::Prefetch(buffer_opt) => {
+                    if let Some(buf) = buffer_opt {
+                        self.dmu().finish_prefetch(buf)?
+                    } else {
+                        continue;
+                    }
+                }
+            };
+            if let Some(entry) = buf.assert_buffer().get(key) {
+                msgs.push(entry)
+            }
+        }
 
         match data {
             None => {
@@ -523,6 +553,7 @@ where
     where
         K: Borrow<[u8]> + Into<CowBytes>,
     {
+        println!("insert");
         if key.borrow().is_empty() {
             return Err(Error::EmptyKey);
         }
@@ -551,7 +582,9 @@ where
         };
 
         let op_preference = storage_preference.or(self.storage_preference);
-        let added_size = node.insert(key, msg, self.msg_action(), op_preference);
+        let added_size = node.insert(key, msg, self.msg_action(), op_preference, |np| {
+            self.get_mut_node(np).unwrap()
+        });
         node.add_size(added_size);
 
         if parent.is_none() && node.root_needs_merge() {

@@ -189,6 +189,7 @@ where
                 ) {
                     GetRangeResult::NextNode {
                         np,
+                        buffer_np,
                         prefetch_option_node,
                     } => {
                         let previous_prefetch_node = if let Some(prefetch_np) = prefetch_option_node

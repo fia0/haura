@@ -2,10 +2,13 @@
 use crate::{
     buffer::Buf,
     checksum::{Checksum, ChecksumError},
-    data_management::IntegrityMode,
-    tree::imp::{
-        node::{PivotGetMutResult, PivotGetResult},
-        PivotKey,
+    data_management::{Dml, IntegrityMode},
+    tree::{
+        imp::{
+            node::{PivotGetMutResult, PivotGetResult},
+            PivotKey,
+        },
+        Node,
     },
 };
 
@@ -21,7 +24,7 @@ use crate::{
     AtomicStoragePreference, StoragePreference,
 };
 use parking_lot::RwLock;
-use std::{borrow::Borrow, collections::BTreeMap, mem::replace};
+use std::{borrow::Borrow, collections::BTreeMap, mem::replace, ops::DerefMut};
 
 use super::serialize_nodepointer;
 use serde::{Deserialize, Serialize};
@@ -79,6 +82,10 @@ impl<N> ChildLink<N> {
     pub fn ptr(&self) -> &RwLock<N> {
         &self.ptr
     }
+
+    pub fn iter_mut(&mut self) -> [&mut RwLock<N>; 2] {
+        [&mut self.buffer, &mut self.ptr]
+    }
 }
 
 impl<N> std::fmt::Debug for CopylessInternalNode<N> {
@@ -134,7 +141,7 @@ impl<N: StaticSize> Size for CopylessInternalNode<N> {
             + std::mem::size_of::<u32>()
             + self.children.len() * N::static_size()
             + self.children.len() * INTERNAL_INTEGRITY_CHECKSUM_SIZE
-            + self.meta_data.entries_sizes.iter().sum::<usize>()
+            // + self.meta_data.entries_sizes.iter().sum::<usize>()
             + 8
     }
 
@@ -442,8 +449,7 @@ impl<N> CopylessInternalNode<N> {
     }
 
     pub fn after_insert_size_delta(&mut self, idx: usize, size_delta: isize) {
-        self.meta_data.entries_sizes[idx] =
-            (self.meta_data.entries_sizes[idx] as isize + size_delta) as usize;
+        self.meta_data.entries_sizes[idx] = size_delta as usize;
 
         // assert!(
         //     self.meta_data.entries_sizes[idx] < 8 * 1024 * 1024,
@@ -453,18 +459,23 @@ impl<N> CopylessInternalNode<N> {
     }
 
     pub(crate) fn has_too_high_fanout(&self, max_size: usize) -> bool {
-        self.meta_data.pivot.iter().map(|p| p.len()).sum::<usize>()
-            > (max_size as f32).powf(0.5).ceil() as usize
+        // self.meta_data.pivot.iter().map(|p| p.len()).sum::<usize>()
+        //     > (max_size as f32).powf(0.5).ceil() as usize
+        self.children.len() > 16
+    }
+
+    pub(crate) fn logical_size(&self) -> usize {
+        self.meta_data.current_size + self.meta_data.entries_sizes.iter().sum::<usize>()
     }
 }
 
 impl<N> CopylessInternalNode<N> {
-    pub fn get(&self, key: &[u8]) -> (&RwLock<N>, Option<(KeyInfo, SlicedCowBytes)>)
+    pub fn get(&self, key: &[u8]) -> &ChildLink<N>
     where
         N: ObjectReference,
     {
         let child = &self.children[self.idx(key)];
-        (&child.ptr, child.buffer.get(key))
+        child
     }
 
     pub fn get_mut(&mut self, key: &[u8]) -> &mut ChildLink<N>
@@ -674,6 +685,7 @@ impl<N: ObjectReference> CopylessInternalNode<N> {
             // SAFETY: There must always be pivots + 1 many children, otherwise
             // the state of the Internal Node is broken.
             self.children[id].ptr.write().set_index(pk.clone());
+            self.children[id].buffer.write().set_index(pk.clone());
         }
         self
     }
@@ -885,9 +897,14 @@ impl<'a, N> PrepareMergeChild<'a, N>
 where
     N: ObjectReference + HasStoragePreference,
 {
-    pub(in crate::tree::imp) fn merge_children(
+    pub(in crate::tree::imp) fn merge_children<F, T>(
         self,
-    ) -> MergeChildResult<Box<dyn Iterator<Item = N>>> {
+        fetch_node: F,
+    ) -> MergeChildResult<Box<dyn Iterator<Item = N>>>
+    where
+        F: Fn(&mut RwLock<N>) -> T,
+        T: stable_deref_trait::StableDeref<Target = Node<N>> + DerefMut,
+    {
         let mut right_child_links = self.node.children.remove(self.pivot_key_idx + 1);
         let pivot_key = self.node.meta_data.pivot.remove(self.pivot_key_idx);
         self.node
@@ -899,15 +916,18 @@ where
             .entries_sizes
             .remove(self.pivot_key_idx + 1);
 
-        let left_buffer = self.node.children[self.pivot_key_idx].buffer_mut();
-        let mut right_buffer = right_child_links.buffer_mut();
+        let mut left_buffer = fetch_node(&mut self.node.children[self.pivot_key_idx].buffer);
+        let mut right_buffer = fetch_node(&mut right_child_links.buffer);
 
         let size_delta = pivot_key.size()
             + N::static_size() * 2
             + std::mem::size_of::<u8>()
             + std::mem::size_of::<usize>();
-        left_buffer.append(&mut right_buffer);
-        self.node.meta_data.entries_sizes[self.pivot_key_idx] = unimplemented!();
+
+        left_buffer
+            .assert_buffer_mut()
+            .append(right_buffer.assert_buffer_mut());
+        self.node.meta_data.entries_sizes[self.pivot_key_idx] = left_buffer.size();
         self.node.meta_data.invalidate();
 
         MergeChildResult {

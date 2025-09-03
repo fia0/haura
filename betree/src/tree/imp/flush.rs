@@ -104,7 +104,7 @@ where
                         pivot_key,
                         old_np,
                         size_delta,
-                    } = m.merge_children();
+                    } = m.merge_children(|np| self.get_mut_node(np).unwrap());
                     if child_on_left {
                         let size_delta = child.merge(&mut sibling, pivot_key);
                         child.add_size(size_delta);
@@ -153,7 +153,7 @@ where
                             right.add_size(-size_delta);
                             let MergeChildResult {
                                 old_np, size_delta, ..
-                            } = m.merge_children();
+                            } = m.merge_children(|np| self.get_mut_node(np).unwrap());
                             for np in old_np {
                                 self.dml.remove(np);
                             }

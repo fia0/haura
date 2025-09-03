@@ -27,6 +27,7 @@ use std::{
     collections::BTreeMap,
     io::{self, Write},
     mem::replace,
+    ops::DerefMut,
 };
 
 /// The tree node type.
@@ -94,8 +95,14 @@ impl StorageMap {
         let pref = node.correct_preference();
         Some(match (&node.0, self.get(pref)) {
             (_, StorageKind::Hdd) => mib!(4),
-            (_, StorageKind::Ssd) => mib!(2),
-            (_, StorageKind::Memory) => mib!(2),
+            // SSD
+            (CopylessInternal(_), StorageKind::Ssd) => mib!(2),
+            (Buffer(_), StorageKind::Ssd) => mib!(2),
+            (MemLeaf(_), StorageKind::Ssd) => mib!(2),
+            // NVM
+            (CopylessInternal(_), StorageKind::Memory) => mib!(2),
+            (Buffer(_), StorageKind::Memory) => mib!(2),
+            (MemLeaf(_), StorageKind::Memory) => mib!(2),
         })
     }
 }
@@ -220,7 +227,7 @@ impl<R: ObjectReference + HasStoragePreference + StaticSize> Object<R> for Node<
                 integrity_mode,
             )?)))
         } else if data[0..4] == (NodeInnerType::Buffer as u32).to_be_bytes() {
-            Ok(Node(MemLeaf(PackedChildBuffer::unpack(
+            Ok(Node(Buffer(PackedChildBuffer::unpack(
                 data.into_sliced_cow_bytes().slice_from(4),
                 integrity_mode,
             )?)))
@@ -376,6 +383,10 @@ impl<N: HasStoragePreference + StaticSize> Node<N> {
             MemLeaf(_) | Buffer(_) => None,
             CopylessInternal(ref nvminternal) => Some(nvminternal.fanout()),
         }
+    }
+
+    pub(super) fn new_buffer(buffer: PackedChildBuffer) -> Self {
+        Node(Inner::Buffer(buffer))
     }
 
     fn ensure_unpacked(&mut self) -> isize {
@@ -556,20 +567,17 @@ pub(super) enum GetRangeResult<'a, T, N: 'a + 'static> {
 }
 
 impl<N: HasStoragePreference> Node<N> {
-    pub(super) fn get(&self, key: &[u8], msgs: &mut Vec<(KeyInfo, SlicedCowBytes)>) -> GetResult<N>
+    pub(super) fn get(&self, key: &[u8]) -> GetResult<N>
     where
         N: ObjectReference,
     {
         match self.0 {
             MemLeaf(ref nvmleaf) => GetResult::Data(nvmleaf.get(key)),
             CopylessInternal(ref nvminternal) => {
-                let (child_np, msg) = nvminternal.get(key);
-                if let Some(msg) = msg {
-                    msgs.push(msg);
-                }
+                let child_link = nvminternal.get(key);
                 GetResult::NextNode {
-                    child: child_np,
-                    buffer: todo!(),
+                    child: child_link.ptr(),
+                    buffer: child_link.buffer(),
                 }
             }
             Buffer(_) => unimplemented!(),
@@ -579,7 +587,8 @@ impl<N: HasStoragePreference> Node<N> {
     pub(super) fn assert_buffer(&self) -> &PackedChildBuffer {
         match &self.0 {
             Buffer(packed_child_buffer) => packed_child_buffer,
-            _ => panic!("cannot assert non-buffer as buffer"),
+            MemLeaf(_) => panic!("is leaf"),
+            CopylessInternal(_) => panic!("is internal"),
         }
     }
 
@@ -620,6 +629,7 @@ impl<N: HasStoragePreference> Node<N> {
 
                 GetRangeResult::NextNode {
                     np: cl.ptr(),
+                    buffer_np: cl.buffer(),
                     prefetch_option_node: prefetch_option.map(|l| l.ptr()),
                 }
             }
@@ -657,17 +667,20 @@ impl<N: HasStoragePreference> Node<N> {
 }
 
 impl<N: HasStoragePreference + StaticSize> Node<N> {
-    pub(super) fn insert<K, M>(
+    pub(super) fn insert<K, M, F, T>(
         &mut self,
         key: K,
         msg: SlicedCowBytes,
         msg_action: M,
         storage_preference: StoragePreference,
+        fetch_node: F,
     ) -> isize
     where
         K: Borrow<[u8]> + Into<CowBytes>,
         M: MessageAction,
         N: ObjectReference,
+        F: Fn(&mut RwLock<N>) -> T,
+        T: stable_deref_trait::StableDeref<Target = Node<N>> + DerefMut,
     {
         let size_delta = self.ensure_unpacked();
         let keyinfo = KeyInfo { storage_preference };
@@ -678,13 +691,15 @@ impl<N: HasStoragePreference + StaticSize> Node<N> {
                     // This is a remainder from the version in which we
                     // wroteback child buffers separately.
                     let child_idx = nvminternal.idx(key.borrow());
-                    let link = nvminternal.get_mut(key.borrow());
-                    let buffer_node = link.buffer_mut();
-                    let size_delta = buffer_node.insert(key, keyinfo, msg, msg_action).take().1;
-                    nvminternal.after_insert_size_delta(child_idx, size_delta);
+                    let mut buffer = fetch_node(nvminternal.children[child_idx].buffer_mut());
+                    let sd = buffer.insert(key, msg, msg_action, storage_preference, fetch_node);
+                    nvminternal.after_insert_size_delta(child_idx, buffer.size() as isize);
                     size_delta
                 }
-                Buffer(_) => unimplemented!(),
+                Buffer(ref mut buffer) => {
+                    let size_delta = buffer.insert(key, keyinfo, msg, msg_action).take().1;
+                    size_delta
+                }
             })
     }
 
@@ -703,18 +718,25 @@ impl<N: HasStoragePreference + StaticSize> Node<N> {
                 CopylessInternal(ref mut nvminternal) => {
                     // This is a remainder from the version in which we
                     // wroteback child buffers separately.
+                    // let mut size_delta = 0;
+                    // for (k, (kinfo, v)) in msg_buffer {
+                    //     let idx = nvminternal.idx(&k);
+                    //     let link = nvminternal.get_mut(&k);
+                    //     // let buffer_node = link.buffer_mut();
+                    //     // let delta = buffer_node.insert(k, kinfo, v, msg_action.clone()).take().1;
+                    //     // nvminternal.after_insert_size_delta(idx, delta);
+                    //     // size_delta += delta;
+                    // }
+                    // size_delta
+                    0
+                }
+                Buffer(ref mut buffer) => {
                     let mut size_delta = 0;
                     for (k, (kinfo, v)) in msg_buffer {
-                        let idx = nvminternal.idx(&k);
-                        let link = nvminternal.get_mut(&k);
-                        let buffer_node = link.buffer_mut();
-                        let delta = buffer_node.insert(k, kinfo, v, msg_action.clone()).take().1;
-                        nvminternal.after_insert_size_delta(idx, delta);
-                        size_delta += delta;
+                        size_delta += buffer.insert(k, kinfo, v, msg_action.clone()).take().1;
                     }
                     size_delta
                 }
-                Buffer(_) => unimplemented!(),
             })
     }
 
@@ -754,10 +776,10 @@ impl<N: HasStoragePreference> Node<N> {
             CopylessInternal(ref mut nvminternal) => Some(Box::new(
                 nvminternal
                     .iter_mut()
-                    .map(|child| child.ptr_mut().get_mut()),
-            )),
-            // NOTE: This returns none as it is not necessarily harmful to write
-            // it back as no consistency constraints have to be met.
+                    .flat_map(|child| child.iter_mut())
+                    .map(|np| np.get_mut()),
+            )), // NOTE: This returns none as it is not necessarily harmful to write
+                // it back as no consistency constraints have to be met.
         }
     }
 
