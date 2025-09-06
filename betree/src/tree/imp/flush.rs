@@ -127,10 +127,13 @@ where
 
             let mut buffer = self.get_mut_node(child_buffer.buffer_mut())?;
             let (buffer, size_delta) = buffer.assert_buffer_mut().take();
+            child_buffer.set_buffer_empty();
             child_buffer.add_size(-(size_delta as isize));
             self.dml.verify_cache();
             // 5. Insert messages from the child buffer into the child.
-            let size_delta_child = child.insert_msg_buffer(buffer, self.msg_action());
+            let size_delta_child = child.insert_msg_buffer(buffer, self.msg_action(), |np| {
+                self.get_mut_node(np).unwrap()
+            });
             child.add_size(size_delta_child);
 
             // 6. Check if minimal leaf size is fulfilled, otherwise merge again.

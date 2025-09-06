@@ -553,7 +553,6 @@ where
     where
         K: Borrow<[u8]> + Into<CowBytes>,
     {
-        println!("insert");
         if key.borrow().is_empty() {
             return Err(Error::EmptyKey);
         }

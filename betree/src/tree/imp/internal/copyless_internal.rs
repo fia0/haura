@@ -220,6 +220,12 @@ impl<N: HasStoragePreference> HasStoragePreference for CopylessInternalNode<N> {
     }
 }
 
+impl<N: StaticSize> CopylessInternalNode<N> {
+    pub(crate) fn logical_size(&self) -> usize {
+        self.size() + self.meta_data.entries_sizes.iter().sum::<usize>()
+    }
+}
+
 pub struct InternalNodeLink<N> {
     pub ptr: N,
     pub buffer: N,
@@ -462,10 +468,6 @@ impl<N> CopylessInternalNode<N> {
         // self.meta_data.pivot.iter().map(|p| p.len()).sum::<usize>()
         //     > (max_size as f32).powf(0.5).ceil() as usize
         self.children.len() > 16
-    }
-
-    pub(crate) fn logical_size(&self) -> usize {
-        self.meta_data.current_size + self.meta_data.entries_sizes.iter().sum::<usize>()
     }
 }
 
@@ -867,6 +869,10 @@ where
             pivot_key_idx,
             other_child_idx,
         }
+    }
+
+    pub fn set_buffer_empty(&mut self) {
+        self.node.meta_data.entries_sizes[self.child_idx] = 0;
     }
 
     // pub(in crate::tree::imp) fn add_size(&mut self, size_delta: isize) {

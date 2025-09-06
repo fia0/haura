@@ -206,8 +206,7 @@ function ci() {
 }
 
 function ycsb_a() {
-    run "$RUN_IDENT" ycsb_a_block ycsb-a "$((8 * 1024 * 1024 * 1024))" 0 8
-    run "$RUN_IDENT" ycsb_a_memory ycsb-a "$((8 * 1024 * 1024 * 1024))" 1 8
+    run "$RUN_IDENT" ycsb_a_block ycsb-a "$((1 * 1024 * 1024 * 1024))" 0 8 2
 }
 
 function ycsb_b() {
@@ -216,8 +215,7 @@ function ycsb_b() {
 }
 
 function ycsb_c() {
-    run "$RUN_IDENT" ycsb_c_block ycsb-c "$((8 * 1024 * 1024 * 1024))" 0 8
-    run "$RUN_IDENT" ycsb_c_memory ycsb-c "$((8 * 1024 * 1024 * 1024))" 1 8
+    run "$RUN_IDENT" ycsb_c_block ycsb-c "$((3 * 1024 * 1024 * 1024))" 0 8 2
 }
 
 function ycsb_d() {
@@ -276,9 +274,9 @@ ensure_config
 #checkpoints
 #switchover
 #ingest
-# ycsb_a
+ycsb_a
 # ycsb_b
-# ycsb_c
+ycsb_c
 # ycsb_d
 # ycsb_e
 # ycsb_f

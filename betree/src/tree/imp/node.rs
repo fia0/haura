@@ -456,7 +456,7 @@ impl<N: HasStoragePreference + StaticSize> Node<N> {
     fn inner_size(&self) -> usize {
         match &self.0 {
             MemLeaf(m) | Buffer(m) => m.size(),
-            CopylessInternal(d) => d.size(),
+            CopylessInternal(d) => d.logical_size(),
         }
     }
 }
@@ -703,11 +703,19 @@ impl<N: HasStoragePreference + StaticSize> Node<N> {
             })
     }
 
-    pub(super) fn insert_msg_buffer<I, M>(&mut self, msg_buffer: I, msg_action: M) -> isize
+    pub(super) fn insert_msg_buffer<I, M, F, T>(
+        &mut self,
+        msg_buffer: I,
+        msg_action: M,
+
+        fetch_node: F,
+    ) -> isize
     where
         I: IntoIterator<Item = (CowBytes, (KeyInfo, SlicedCowBytes))>,
         M: MessageAction,
         N: ObjectReference,
+        F: Fn(&mut RwLock<N>) -> T,
+        T: stable_deref_trait::StableDeref<Target = Node<N>> + DerefMut,
     {
         let size_delta = self.ensure_unpacked();
         size_delta
@@ -719,15 +727,21 @@ impl<N: HasStoragePreference + StaticSize> Node<N> {
                     // This is a remainder from the version in which we
                     // wroteback child buffers separately.
                     // let mut size_delta = 0;
-                    // for (k, (kinfo, v)) in msg_buffer {
-                    //     let idx = nvminternal.idx(&k);
-                    //     let link = nvminternal.get_mut(&k);
-                    //     // let buffer_node = link.buffer_mut();
-                    //     // let delta = buffer_node.insert(k, kinfo, v, msg_action.clone()).take().1;
-                    //     // nvminternal.after_insert_size_delta(idx, delta);
-                    //     // size_delta += delta;
-                    // }
-                    // size_delta
+                    for (k, (kinfo, v)) in msg_buffer {
+                        let idx = nvminternal.idx(&k);
+                        let link = nvminternal.get_mut(&k);
+                        let buffer_node = link.buffer_mut();
+                        let mut buffer = fetch_node(buffer_node);
+                        let delta = buffer
+                            .assert_buffer_mut()
+                            .insert(k, kinfo, v, msg_action.clone())
+                            .take()
+                            .1;
+                        nvminternal.after_insert_size_delta(
+                            idx,
+                            buffer.assert_buffer_mut().size() as isize,
+                        );
+                    }
                     0
                 }
                 Buffer(ref mut buffer) => {

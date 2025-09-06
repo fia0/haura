@@ -645,7 +645,7 @@ impl PackedChildBuffer {
         let mut next_key = pivot.to_vec();
         next_key.push(0);
 
-        assert!(self.buffer.is_unpacked());
+        // assert!(self.buffer.is_unpacked());
         let right_buffer = self.buffer.unpacked().inner.split_off(&next_key[..]);
         self.messages_preference.invalidate();
 

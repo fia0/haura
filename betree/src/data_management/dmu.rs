@@ -781,7 +781,9 @@ where
                 Err(ChangeKeyError::Pinned) => {
                     // TODO wait
                     warn!("Pinned node");
+                    panic!();
                     drop(cache);
+                    std::thread::sleep(std::time::Duration::from_millis(100));
                     yield_now();
                     continue;
                 }
