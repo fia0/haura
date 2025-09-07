@@ -206,7 +206,7 @@ function ci() {
 }
 
 function ycsb_a() {
-    run "$RUN_IDENT" ycsb_a_block ycsb-a "$((1 * 1024 * 1024 * 1024))" 0 8 2
+    run "$RUN_IDENT" ycsb_a_block ycsb-a "$((1 * 1024 * 1024 * 1024))" 0 8 5
 }
 
 function ycsb_b() {

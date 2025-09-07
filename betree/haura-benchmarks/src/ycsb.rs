@@ -71,16 +71,14 @@ pub fn a(mut client: KvClient, size: u64, threads: usize, runtime: u64) {
                         let mut total = 0;
                         let value = vec![0u8; ENTRY_SIZE];
                         while let Ok(start) = rx.recv() {
-                            while start.elapsed().as_secs() < runtime {
-                                for _ in 0..100 {
-                                    let k = &keys[dist.sample(&mut rng) - 1][..];
-                                    if rng.gen_bool(0.5) {
-                                        ds.get(k).unwrap().unwrap();
-                                    } else {
-                                        ds.upsert(k.to_vec(), &value, 0).unwrap();
-                                    }
-                                    total += 1;
+                            for _ in 0..10_000 {
+                                let k = &keys[dist.sample(&mut rng) - 1][..];
+                                if rng.gen_bool(0.5) {
+                                    ds.get(k).unwrap().unwrap();
+                                } else {
+                                    ds.upsert(k.to_vec(), &value, 0).unwrap();
                                 }
+                                total += 1;
                             }
                         }
                         total
