@@ -75,7 +75,6 @@ where
                         return Ok(());
                     }
                     Some(ref mut parent) => {
-                        println!("split 1");
                         let (next_node, size_delta) = self.split_node(_node, parent)?;
                         node = next_node;
                         parent.add_size(size_delta);
@@ -179,7 +178,6 @@ where
             }
             // 7. If the child is too large, split until it is not.
             while self.storage_map.leaf_is_too_large(&mut child) {
-                println!("split 7");
                 let (next_node, size_delta) = self.split_node(child, &mut child_buffer)?;
                 child_buffer.add_size(size_delta);
                 child = next_node;

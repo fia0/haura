@@ -730,7 +730,8 @@ where
             // assert_eq!(self.children[child_idx].buffer.size(), *child);
 
             if *child >= min_flush_size
-                && ((self.size() - *child) <= max_node_size || self.fanout() < 2 * min_fanout)
+                && ((self.logical_size() - *child) <= max_node_size
+                    || self.fanout() < 2 * min_fanout)
                 && !self.has_too_high_fanout(max_node_size)
             {
                 Some(child_idx)
