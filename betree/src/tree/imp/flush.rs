@@ -75,6 +75,7 @@ where
                         return Ok(());
                     }
                     Some(ref mut parent) => {
+                        println!("split 1");
                         let (next_node, size_delta) = self.split_node(_node, parent)?;
                         node = next_node;
                         parent.add_size(size_delta);
@@ -125,8 +126,10 @@ where
             }
             // 4. Remove messages from the child buffer.
 
-            let mut buffer = self.get_mut_node(child_buffer.buffer_mut())?;
-            let (buffer, size_delta) = buffer.assert_buffer_mut().take();
+            let mut bu = self.get_mut_node(child_buffer.buffer_mut())?;
+            let pack_buf = bu.assert_buffer_mut();
+            let (buffer, size_delta) = pack_buf.take();
+            drop(bu);
             child_buffer.set_buffer_empty();
             child_buffer.add_size(-(size_delta as isize));
             self.dml.verify_cache();
@@ -176,6 +179,7 @@ where
             }
             // 7. If the child is too large, split until it is not.
             while self.storage_map.leaf_is_too_large(&mut child) {
+                println!("split 7");
                 let (next_node, size_delta) = self.split_node(child, &mut child_buffer)?;
                 child_buffer.add_size(size_delta);
                 child = next_node;

@@ -103,6 +103,11 @@ enum Mode {
         #[structopt(default_value = "120")]
         runtime: u64,
     },
+    Simple {
+        size: u64,
+        #[structopt(default_value = "15")]
+        runtime: u64,
+    },
 }
 
 fn run_all(mode: Mode) -> Result<(), Box<dyn Error>> {
@@ -258,6 +263,25 @@ fn run_all(mode: Mode) -> Result<(), Box<dyn Error>> {
         } => {
             let client = control.kv_client(0);
             ycsb::f(client, size, threads as usize, runtime)
+        }
+        Mode::Simple { size, runtime } => {
+            let mut client = control.kv_client(0);
+            const entry_size: u64 = 1024 * 8;
+            let entry_num = size / entry_size;
+
+            use rand::prelude::SliceRandom;
+            use rand::{Rng, SeedableRng};
+            let mut rng = rand_xoshiro::Xoshiro256Plus::seed_from_u64(12);
+
+            let mut keys: Vec<u64> = (0..entry_num).map(|x| x).collect();
+            keys.shuffle(&mut rng);
+
+            let val = [2; entry_size as usize];
+
+            for (idx, key) in keys.iter().enumerate() {
+                println!("inserting {}/{}", idx, keys.len());
+                client.ds.insert(&key.to_be_bytes()[..], &val).unwrap();
+            }
         }
     }
 

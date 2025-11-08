@@ -464,6 +464,9 @@ impl<N> CopylessInternalNode<N> {
         // );
     }
 
+    // This maximum fanout is based on the notes of Bender et al. Technically we
+    // could have a way greater fanout especially with large nodes or a smaller
+    // one based on the keysize. Based on experience they suggest ~4-16 children.
     pub(crate) fn has_too_high_fanout(&self, max_size: usize) -> bool {
         // self.meta_data.pivot.iter().map(|p| p.len()).sum::<usize>()
         //     > (max_size as f32).powf(0.5).ceil() as usize
@@ -1054,7 +1057,7 @@ pub(super) mod tests {
     impl<N: Clone> Clone for ChildLink<N> {
         fn clone(&self) -> Self {
             Self {
-                buffer: self.buffer.clone(),
+                buffer: todo!(),
                 ptr: self.ptr.read().clone().into(),
             }
         }
@@ -1096,7 +1099,7 @@ pub(super) mod tests {
             for _ in 0..pivot_key_cnt + 1 {
                 let buffer = PackedChildBuffer::arbitrary(g);
                 children.push(ChildLink {
-                    buffer,
+                    buffer: todo!(),
                     ptr: RwLock::new(T::arbitrary(g)),
                 });
             }
@@ -1110,7 +1113,7 @@ pub(super) mod tests {
                     ),
                     pref: AtomicStoragePreference::unknown(),
                     entries_prefs: vec![StoragePreference::NONE; pivot_key_cnt + 1],
-                    entries_sizes: children.iter().map(|c| c.buffer.size()).collect::<Vec<_>>(),
+                    entries_sizes: children.iter().map(|c| todo!()).collect::<Vec<_>>(),
                     current_size: 0,
                 },
                 children,

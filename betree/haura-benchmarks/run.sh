@@ -65,6 +65,8 @@ function run {
         ./sysinfo.jsonl |
         "$ROOT/target/release/json-flatten" >"out.jsonl"
 
+    poetry -C "$ROOT/haura-plots" run plots .
+
     popd || return
 }
 
@@ -233,6 +235,11 @@ function ycsb_f() {
     run "$RUN_IDENT" ycsb_f_memory ycsb-f "$((8 * 1024 * 1024 * 1024))" 1 8
 }
 
+function simple() {
+    #run "$RUN_IDENT" simple_1g simple "$((1 * 1024 * 1024 * 1024))"
+    run "$RUN_IDENT" simple_10g simple "$((10 * 1024 * 1024 * 1024))"
+}
+
 cargo build --release
 
 if [ -z "$BETREE_CONFIG" ]; then
@@ -274,9 +281,10 @@ ensure_config
 #checkpoints
 #switchover
 #ingest
-ycsb_a
+#ycsb_a
 # ycsb_b
-ycsb_c
+#ycsb_c
 # ycsb_d
 # ycsb_e
 # ycsb_f
+simple

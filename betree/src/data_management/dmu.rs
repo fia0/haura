@@ -780,10 +780,10 @@ where
                 Err(ChangeKeyError::NotPresent) => Ok(None),
                 Err(ChangeKeyError::Pinned) => {
                     // TODO wait
-                    warn!("Pinned node");
-                    panic!();
-                    drop(cache);
+                    warn!("Pinned node {:?}", std::time::Instant::now());
+                    panic!("test panic");
                     std::thread::sleep(std::time::Duration::from_millis(100));
+                    drop(cache);
                     yield_now();
                     continue;
                 }
