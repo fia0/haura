@@ -10,6 +10,7 @@ use super::{
 };
 use crate::{
     buffer::{self, Buf},
+    cache::AddSize,
     checksum::{Builder, Checksum},
     cow_bytes::{CowBytes, SlicedCowBytes},
     data_management::{
@@ -680,7 +681,7 @@ impl<N: HasStoragePreference + StaticSize> Node<N> {
         M: MessageAction,
         N: ObjectReference,
         F: Fn(&mut RwLock<N>) -> T,
-        T: stable_deref_trait::StableDeref<Target = Node<N>> + DerefMut,
+        T: stable_deref_trait::StableDeref<Target = Node<N>> + DerefMut + AddSize,
     {
         let size_delta = self.ensure_unpacked();
         let keyinfo = KeyInfo { storage_preference };
@@ -693,8 +694,9 @@ impl<N: HasStoragePreference + StaticSize> Node<N> {
                     let child_idx = nvminternal.idx(key.borrow());
                     let mut buffer = fetch_node(nvminternal.children[child_idx].buffer_mut());
                     let sd = buffer.insert(key, msg, msg_action, storage_preference, fetch_node);
+                    buffer.add_size(sd);
                     nvminternal.after_insert_size_delta(child_idx, buffer.size() as isize);
-                    size_delta
+                    0
                 }
                 Buffer(ref mut buffer) => {
                     let size_delta = buffer.insert(key, keyinfo, msg, msg_action).take().1;

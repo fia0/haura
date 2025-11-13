@@ -396,6 +396,8 @@ where
             ObjectKey::Modified(mid) => mid,
         };
 
+        // If the current node is an internal node start process of writing back all internal nodes
+
         let size = object.value_mut().get_mut().cache_size();
         cache.insert(ObjectKey::InWriteback(mid), object, size);
         let entry = cache.get(&ObjectKey::InWriteback(mid), false).unwrap();
@@ -734,14 +736,11 @@ where
     ) -> Result<Option<<Self as Dml>::CacheValueRefMut>, ()> {
         trace!("prepare_write_back: Enter");
         loop {
-            // trace!("prepare_write_back: Trying to acquire cache write lock");
             let mut cache = self.cache.write();
-            // trace!("prepare_write_back: Acquired");
             if cache.contains_key(&ObjectKey::InWriteback(mid)) {
                 // TODO wait
                 drop(cache);
                 yield_now();
-                // trace!("prepare_write_back: Cache contained key, waiting..");
                 continue;
             }
             let result =

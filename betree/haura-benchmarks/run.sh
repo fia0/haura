@@ -236,8 +236,8 @@ function ycsb_f() {
 }
 
 function simple() {
-    #run "$RUN_IDENT" simple_1g simple "$((1 * 1024 * 1024 * 1024))"
-    run "$RUN_IDENT" simple_10g simple "$((10 * 1024 * 1024 * 1024))"
+    run "$RUN_IDENT" simple_1g simple "$((1 * 1024 * 1024 * 1024))"
+    #run "$RUN_IDENT" simple_10g simple "$((10 * 1024 * 1024 * 1024))"
 }
 
 cargo build --release

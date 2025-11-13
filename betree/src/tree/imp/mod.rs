@@ -19,6 +19,7 @@ use crate::{
     tree::MessageAction,
     StoragePreference,
 };
+use bincode::config::WithOtherEndian;
 use leaf::FillUpResult;
 use owning_ref::OwningRef;
 use parking_lot::{RwLock, RwLockWriteGuard};
@@ -553,23 +554,31 @@ where
     where
         K: Borrow<[u8]> + Into<CowBytes>,
     {
-        if key.borrow().is_empty() {
-            return Err(Error::EmptyKey);
-        }
-        let mut parent = None;
-        let mut node = {
-            let mut node = self.get_mut_root_node()?;
-            loop {
-                if self.storage_map.node_is_too_large(&mut node) {
+        let mut walk_optimized_route = |specified_lvl: Option<u32>| {
+            let mut level = u32::MAX;
+            let mut parent = None;
+            let mut node = self.get_mut_root_node().expect("root not found :'");
+            let n = loop {
+                if self.storage_map.node_is_too_large(&mut node)
+                    || Some(node.level()) == specified_lvl
+                {
                     break node;
                 }
+                let cur_lvl = node.level();
                 match DerivateRefNVM::try_new(node, |node| node.try_walk(key.borrow())) {
                     Ok(mut child_buffer) => {
+                        let maybe_buffer = self.try_get_mut_node(child_buffer.buffer_mut());
+                        if maybe_buffer.is_some() {
+                            level = cur_lvl;
+                        }
+
                         let maybe_child = self.try_get_mut_node(child_buffer.child_pointer_mut());
                         if let Some(child) = maybe_child {
                             node = child;
                             parent = Some(child_buffer);
                         } else {
+                            // node = child_buffer.into_owner();
+                            // break;
                             break child_buffer.into_owner();
                         }
                     }
@@ -577,9 +586,32 @@ where
                         break node;
                     }
                 };
-            }
+            };
+            (parent, n, level)
         };
 
+        if key.borrow().is_empty() {
+            return Err(Error::EmptyKey);
+        }
+
+        // The preference for *not* destroying the cache should be the following (following the normal B-epsilon insertion rules).
+        //
+        // 1. Insert into the last *cached* and *modified* buffer that is currently available.
+        // 2. If none is available go back to the root node and force an insertion there EVEN IF head nodes of lower nodes are available.
+        //
+        // While forcing more memcpy this should reduce unnecesary evictions from cache and improve the cache hit rate in the longterm.
+
+        let (parent, mut node) = {
+            let (p, n, level) = walk_optimized_route(None);
+            if n.level() == level || level == u32::MAX {
+                (p, n)
+            } else {
+                drop(p);
+                drop(n);
+                let (p, n, _) = walk_optimized_route(Some(level));
+                (p, n)
+            }
+        };
         let op_preference = storage_preference.or(self.storage_preference);
         let added_size = node.insert(key, msg, self.msg_action(), op_preference, |np| {
             self.get_mut_node(np).unwrap()
