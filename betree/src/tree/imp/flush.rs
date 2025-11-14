@@ -53,6 +53,7 @@ where
         mut parent: Option<DerivateRefNVM<X::CacheValueRefMut, TakeChildBuffer<'static, R>>>,
     ) -> Result<(), Error> {
         loop {
+            self.dml.verify_cache();
             if !self.storage_map.node_is_too_large(&node) {
                 return Ok(());
             }
@@ -124,19 +125,20 @@ where
                 continue;
             }
             // 4. Remove messages from the child buffer.
-
             let mut bu = self.get_mut_node(child_buffer.buffer_mut())?;
             let pack_buf = bu.assert_buffer_mut();
             let (buffer, size_delta) = pack_buf.take();
+            bu.add_size(-(size_delta as isize));
             drop(bu);
             child_buffer.set_buffer_empty();
-            child_buffer.add_size(-(size_delta as isize));
+            // child_buffer.add_size(-(size_delta as isize));
             self.dml.verify_cache();
             // 5. Insert messages from the child buffer into the child.
             let size_delta_child = child.insert_msg_buffer(buffer, self.msg_action(), |np| {
                 self.get_mut_node(np).unwrap()
             });
             child.add_size(size_delta_child);
+            self.dml.verify_cache();
 
             // 6. Check if minimal leaf size is fulfilled, otherwise merge again.
             if self.storage_map.leaf_is_too_small(&child) {

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 build = "build.rs"
 license = "MIT OR Apache-2.0"
-authors = ["Sajad Karim <sajad.karim@ovgu.de>", "Johannes Wünsche <johannes@spacesnek.rocks>"]
+authors = ["Sajad Karim <sajad.karim@ovgu.de>"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [build-dependencies]

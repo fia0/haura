@@ -554,7 +554,7 @@ where
     where
         K: Borrow<[u8]> + Into<CowBytes>,
     {
-        let mut walk_optimized_route = |specified_lvl: Option<u32>| {
+        let walk_optimized_route = |specified_lvl: Option<u32>| {
             let mut level = u32::MAX;
             let mut parent = None;
             let mut node = self.get_mut_root_node().expect("root not found :'");
@@ -612,6 +612,7 @@ where
                 (p, n)
             }
         };
+        self.dml.verify_cache();
         let op_preference = storage_preference.or(self.storage_preference);
         let added_size = node.insert(key, msg, self.msg_action(), op_preference, |np| {
             self.get_mut_node(np).unwrap()

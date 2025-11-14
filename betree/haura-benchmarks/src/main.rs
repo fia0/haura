@@ -279,7 +279,7 @@ fn run_all(mode: Mode) -> Result<(), Box<dyn Error>> {
             let val = [2; entry_size as usize];
 
             for (idx, key) in keys.iter().enumerate() {
-                println!("inserting {}/{}", idx, keys.len());
+                // println!("inserting {}/{}", idx, keys.len());
                 client.ds.insert(&key.to_be_bytes()[..], &val).unwrap();
             }
 
