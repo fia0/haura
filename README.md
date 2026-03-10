@@ -5,6 +5,11 @@
 
 A storage library offering key-value and object interfaces by managing B^ε-trees on block storage devices.
 
+## Experimental Branch
+
+This branch contains an experimental feature that splits up nodes to reduce the
+overall read and write amplification exhibited.
+
 ## Dependencies
 
 We advise you to use always the latest version of Rust *Stable*. For compatability we provide the minimum rust version also in the Cargo.toml of each crate in this project.

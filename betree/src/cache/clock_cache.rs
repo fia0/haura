@@ -395,7 +395,6 @@ impl<K: Clone + Eq + Hash + Sync + Send + 'static, V: Sync + Send + SizeMut + 's
                     size,
                     actual
                 );
-                panic!();
             }
         }
     }

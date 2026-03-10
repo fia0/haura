@@ -283,14 +283,13 @@ fn run_all(mode: Mode) -> Result<(), Box<dyn Error>> {
                 client.ds.insert(&key.to_be_bytes()[..], &val).unwrap();
             }
 
-            let mut missing = 0;
-            for (idx, key) in keys.iter().enumerate() {
-                if client.ds.get(&key.to_be_bytes()[..]).unwrap().is_none() {
-                    missing += 1;
-                }
-            }
-
-            println!("missing keys {missing}");
+            // let mut missing = 0;
+            // for (idx, key) in keys.iter().enumerate() {
+            //     if client.ds.get(&key.to_be_bytes()[..]).unwrap().is_none() {
+            //         missing += 1;
+            //     }
+            // }
+            // println!("missing keys {missing}");
         }
     }
 

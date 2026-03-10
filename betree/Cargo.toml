@@ -78,7 +78,7 @@ clap = "2.33"
 criterion = "0.3"
 
 [features]
-default = ["init_env_logger", "figment_config"]
+default = ["init_env_logger", "figment_config", "cache-paranoia"]
 
 # unlock unstable API for consumption by bectl and other debugging tools
 internal-api = []
